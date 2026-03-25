@@ -12,7 +12,7 @@ function detectPlatform(url) {
 }
 
 async function fetchHtml(url) {
-  const apiUrl = `http://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true`;
+  const apiUrl = `http://api.scraperapi.com?api_key=${SCRAPER_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=in`;
   const { data } = await axios.get(apiUrl, { timeout: 60000 });
   return cheerio.load(data);
 }
