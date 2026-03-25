@@ -30,11 +30,16 @@ async function getBrowser() {
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
       '--disable-infobars',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu',
       '--window-size=1366,768',
     ],
   });
 }
-
 async function getPage(url) {
   const browser = await getBrowser();
   try {
@@ -46,6 +51,35 @@ async function getPage(url) {
     });
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
+    return { page, browser };
+  } catch (err) {
+    await browser.close();
+    throw err;
+  }
+}async function getPage(url) {
+  const browser = await getBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent(randomUA());
+    await page.setViewport({ width: 1366, height: 768 });
+
+    // Full stealth
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en'] });
+      window.chrome = { runtime: {} };
+    });
+
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-IN,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+    });
+
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
+    await new Promise(r => setTimeout(r, 4000)); // wait longer for JS
+
     return { page, browser };
   } catch (err) {
     await browser.close();
