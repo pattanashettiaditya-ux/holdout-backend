@@ -54,39 +54,61 @@ async function getPage(url) {
 }
 
 // ─── Amazon ───────────────────────────────────────────────────────────────────
-
 async function scrapeAmazon(url) {
   const { page, browser } = await getPage(url);
   try {
     const result = await page.evaluate(() => {
       const name = document.querySelector('#productTitle')?.innerText?.trim()
-        || document.querySelector('h1.a-size-large')?.innerText?.trim()
+        || document.querySelector('h1')?.innerText?.trim()
         || 'Amazon Product';
 
+      // Try every possible price selector
       const selectors = [
         '.a-price[data-a-size="xl"] .a-price-whole',
         '.a-price[data-a-size="b"] .a-price-whole',
         '.priceToPay .a-price-whole',
         '#priceblock_ourprice',
         '#priceblock_dealprice',
-        '.a-price-whole',
         '#price_inside_buybox',
+        '.a-price-whole',
+        'span.a-offscreen',
+        '#corePrice_feature_div .a-price .a-offscreen',
+        '.apexPriceToPay .a-offscreen',
       ];
 
       let priceText = '';
       for (const sel of selectors) {
         const el = document.querySelector(sel);
-        if (el?.innerText) { priceText = el.innerText; break; }
+        if (el?.innerText || el?.textContent) {
+          priceText = el.innerText || el.textContent;
+          break;
+        }
       }
 
       const image = document.querySelector('#landingImage')?.src
         || document.querySelector('#imgTagWrapperId img')?.src || null;
 
-      return { name, priceText, image };
+      // Debug: dump all price-like text on page
+      const allPrices = Array.from(document.querySelectorAll('[class*="price"]'))
+        .map(el => el.innerText?.trim())
+        .filter(t => t && t.includes('₹'))
+        .slice(0, 5);
+
+      return { name, priceText, image, allPrices };
     });
 
+    console.log('Amazon debug:', JSON.stringify(result));
+
     const price = parseFloat(result.priceText.replace(/[^0-9.]/g, ''));
-    if (!price || isNaN(price)) throw new Error('Could not extract Amazon price');
+    if (!price || isNaN(price)) {
+      // Try extracting from allPrices fallback
+      for (const p of result.allPrices || []) {
+        const extracted = parseFloat(p.replace(/[^0-9.]/g, ''));
+        if (extracted > 0) return { name: result.name, price: extracted, image: result.image, platform: 'amazon' };
+      }
+      throw new Error('Could not extract Amazon price');
+    }
+
     return { name: result.name, price, image: result.image, platform: 'amazon' };
   } finally {
     await browser.close();
