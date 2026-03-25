@@ -14,7 +14,11 @@ initDb();
 app.use(cors());
 app.use(express.json());
 app.use('/api', apiRoutes);
-
+app.get('/test-notify', async (req, res) => {
+  const { checkAllPrices } = require('./jobs/priceChecker');
+  await checkAllPrices();
+  res.json({ done: true });
+});
 app.get('/', (req, res) => {
   res.json({ name: 'Holdout API', version: '1.0.0', status: 'running' });
 });
