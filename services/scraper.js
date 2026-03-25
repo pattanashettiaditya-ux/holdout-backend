@@ -42,9 +42,20 @@ async function scrapeMyntra(url) {
   const $ = await fetchHtml(url);
   const name = $('h1.pdp-title').text().trim()
     || $('h1.pdp-name').text().trim()
+    || $('h1').first().text().trim()
     || 'Myntra Product';
+
   const priceText = $('span.pdp-price strong').text().trim()
-    || $('span.pdp-discount-container span').first().text().trim();
+    || $('span.pdp-discount-container span').first().text().trim()
+    || $('span[class*="pdp-price"]').first().text().trim()
+    || '';
+
+  // Debug
+  const allText = $('body').text().slice(0, 500);
+  console.log('Myntra debug name:', name);
+  console.log('Myntra debug price:', priceText);
+  console.log('Myntra body sample:', allText);
+
   const price = parseFloat(priceText.replace(/[^0-9.]/g, ''));
   if (!price || isNaN(price)) throw new Error('Could not extract Myntra price');
   return { name, price, image: null, platform: 'myntra' };
