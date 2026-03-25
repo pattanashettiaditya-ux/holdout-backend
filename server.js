@@ -14,6 +14,32 @@ initDb();
 app.use(cors());
 app.use(express.json());
 app.use('/api', apiRoutes);
+
+// Test code
+app.get('/test-notify', async (req, res) => {
+  const db = require('./db/database');
+  const { sendPriceAlert } = require('./services/notifier');
+  
+  const watches = db.getActiveWatches();
+  if (watches.length === 0) {
+    return res.json({ error: 'No active watches found' });
+  }
+  
+  const watch = watches[0];
+  await sendPriceAlert(
+    watch.fcm_token,
+    { name: watch.name, platform: watch.platform },
+    watch.lowest_seen_price * 0.9, // fake 10% drop
+    watch.lowest_seen_price
+  );
+  
+  res.json({ sent: true, to: watch.fcm_token.slice(0, 20) + '...', product: watch.name });
+});
+//--------------------------------
+
+
+
+
 app.get('/test-notify', async (req, res) => {
   const { checkAllPrices } = require('./jobs/priceChecker');
   await checkAllPrices();
