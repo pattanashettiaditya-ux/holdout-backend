@@ -8,7 +8,7 @@ const client = createClient({
 });
 
 async function initDb() {
-  await client.executeMultiple(`
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS products (
       id         TEXT PRIMARY KEY,
       url        TEXT UNIQUE NOT NULL,
@@ -16,25 +16,27 @@ async function initDb() {
       platform   TEXT NOT NULL,
       image_url  TEXT,
       created_at TEXT DEFAULT (datetime('now'))
-    );
-
+    )
+  `);
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS price_points (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id TEXT NOT NULL,
       price      REAL NOT NULL,
       checked_at TEXT DEFAULT (datetime('now'))
-    );
-
+    )
+  `);
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS watches (
-      id                 TEXT PRIMARY KEY,
-      product_id         TEXT NOT NULL,
-      fcm_token          TEXT NOT NULL,
-      wait_window_hours  INTEGER NOT NULL,
-      expires_at         TEXT NOT NULL,
-      lowest_seen_price  REAL NOT NULL,
-      is_bought          INTEGER DEFAULT 0,
-      created_at         TEXT DEFAULT (datetime('now'))
-    );
+      id                TEXT PRIMARY KEY,
+      product_id        TEXT NOT NULL,
+      fcm_token         TEXT NOT NULL,
+      wait_window_hours INTEGER NOT NULL,
+      expires_at        TEXT NOT NULL,
+      lowest_seen_price REAL NOT NULL,
+      is_bought         INTEGER DEFAULT 0,
+      created_at        TEXT DEFAULT (datetime('now'))
+    )
   `);
   console.log('✅ Turso database ready');
 }
