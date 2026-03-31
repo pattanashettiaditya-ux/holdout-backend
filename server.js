@@ -3,7 +3,7 @@ const express = require('express');
 const cors    = require('cors');
 const { initDb } = require('./db/database');
 const apiRoutes  = require('./routes/api');
-const { startCron, checkAllPrices } = require('./jobs/priceChecker');
+const { startCron } = require('./jobs/priceChecker');
 const { sendPriceAlert } = require('./services/notifier');
 
 const app  = express();
@@ -17,17 +17,21 @@ app.get('/', (req, res) => res.json({ name: 'Holdout API', version: '1.0.0', sta
 
 // Test notification endpoint
 app.get('/test-notify', async (req, res) => {
-  const db = require('./db/database');
-  const watches = await db.getActiveWatches();
-  if (watches.length === 0) return res.json({ error: 'No active watches found' });
-  const watch = watches[0];
-  await sendPriceAlert(
-    watch.fcm_token,
-    { name: watch.name, platform: watch.platform },
-    watch.lowest_seen_price * 0.9,
-    watch.lowest_seen_price
-  );
-  return res.json({ sent: true, product: watch.name, token: watch.fcm_token.slice(0, 20) + '...' });
+  try {
+    const db = require('./db/database');
+    const watches = await db.getActiveWatches();
+    if (watches.length === 0) return res.json({ error: 'No active watches found' });
+    const watch = watches[0];
+    await sendPriceAlert(
+      watch.fcm_token,
+      { name: watch.name, platform: watch.platform },
+      watch.lowest_seen_price * 0.9,
+      watch.lowest_seen_price
+    );
+    return res.json({ sent: true, product: watch.name, token: watch.fcm_token.slice(0, 20) + '...' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
