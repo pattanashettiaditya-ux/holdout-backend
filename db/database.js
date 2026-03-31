@@ -1,122 +1,140 @@
-// db/database.js — plain JSON file, no dependencies needed
-const fs   = require('fs');
-const path = require('path');
+// db/database.js — Turso (libsql) persistent database
+const { createClient } = require('@libsql/client');
 require('dotenv').config();
 
-const DB_PATH = path.resolve(process.env.DB_PATH || './holdout.db.json');
+const client = createClient({
+  url:       process.env.TURSO_DATABASE_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
 
-const DEFAULT = { products: [], price_points: [], watches: [] };
+async function initDb() {
+  await client.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS products (
+      id         TEXT PRIMARY KEY,
+      url        TEXT UNIQUE NOT NULL,
+      name       TEXT NOT NULL,
+      platform   TEXT NOT NULL,
+      image_url  TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
 
-function load() {
-  if (!fs.existsSync(DB_PATH)) return { ...DEFAULT };
-  try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); }
-  catch { return { ...DEFAULT }; }
-}
+    CREATE TABLE IF NOT EXISTS price_points (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id TEXT NOT NULL,
+      price      REAL NOT NULL,
+      checked_at TEXT DEFAULT (datetime('now'))
+    );
 
-function save(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
-
-function initDb() {
-  if (!fs.existsSync(DB_PATH)) save(DEFAULT);
-  console.log('✅ Database ready at', DB_PATH);
+    CREATE TABLE IF NOT EXISTS watches (
+      id                 TEXT PRIMARY KEY,
+      product_id         TEXT NOT NULL,
+      fcm_token          TEXT NOT NULL,
+      wait_window_hours  INTEGER NOT NULL,
+      expires_at         TEXT NOT NULL,
+      lowest_seen_price  REAL NOT NULL,
+      is_bought          INTEGER DEFAULT 0,
+      created_at         TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  console.log('✅ Turso database ready');
 }
 
 // ─── Products ─────────────────────────────────────────────────────────────────
 
-function getProduct(id) {
-  return load().products.find(p => p.id === id) || null;
+async function getProduct(id) {
+  const r = await client.execute({ sql: 'SELECT * FROM products WHERE id = ?', args: [id] });
+  return r.rows[0] || null;
 }
 
-function getProductByUrl(url) {
-  return load().products.find(p => p.url === url) || null;
+async function getProductByUrl(url) {
+  const r = await client.execute({ sql: 'SELECT * FROM products WHERE url = ?', args: [url] });
+  return r.rows[0] || null;
 }
 
-function insertProduct({ id, url, name, platform, image_url }) {
-  const data = load();
-  if (data.products.find(p => p.url === url)) return;
-  data.products.push({ id, url, name, platform, image_url, created_at: new Date().toISOString() });
-  save(data);
+async function insertProduct({ id, url, name, platform, image_url }) {
+  await client.execute({
+    sql: 'INSERT OR IGNORE INTO products (id, url, name, platform, image_url) VALUES (?, ?, ?, ?, ?)',
+    args: [id, url, name, platform, image_url || null],
+  });
 }
 
 // ─── Price Points ─────────────────────────────────────────────────────────────
 
-function insertPricePoint({ product_id, price }) {
-  const data = load();
-  data.price_points.push({ id: Date.now(), product_id, price, checked_at: new Date().toISOString() });
-  save(data);
+async function insertPricePoint({ product_id, price }) {
+  await client.execute({
+    sql: 'INSERT INTO price_points (product_id, price) VALUES (?, ?)',
+    args: [product_id, price],
+  });
 }
 
-function getPriceHistory(product_id) {
-  return load().price_points
-    .filter(p => p.product_id === product_id)
-    .sort((a, b) => new Date(a.checked_at) - new Date(b.checked_at))
-    .slice(-720);
+async function getPriceHistory(product_id) {
+  const r = await client.execute({
+    sql: 'SELECT price, checked_at FROM price_points WHERE product_id = ? ORDER BY checked_at ASC LIMIT 720',
+    args: [product_id],
+  });
+  return r.rows;
 }
 
-function getLatestPrice(product_id) {
-  const pts = load().price_points.filter(p => p.product_id === product_id);
-  if (!pts.length) return null;
-  return pts.sort((a, b) => new Date(b.checked_at) - new Date(a.checked_at))[0];
+async function getLatestPrice(product_id) {
+  const r = await client.execute({
+    sql: 'SELECT price FROM price_points WHERE product_id = ? ORDER BY checked_at DESC LIMIT 1',
+    args: [product_id],
+  });
+  return r.rows[0] || null;
 }
 
 // ─── Watches ──────────────────────────────────────────────────────────────────
 
-function getWatch(id) {
-  return load().watches.find(w => w.id === id) || null;
+async function getWatch(id) {
+  const r = await client.execute({ sql: 'SELECT * FROM watches WHERE id = ?', args: [id] });
+  return r.rows[0] || null;
 }
 
-function insertWatch({ id, product_id, fcm_token, wait_window_hours, expires_at, lowest_seen_price }) {
-  const data = load();
-  data.watches.push({ id, product_id, fcm_token, wait_window_hours, expires_at, lowest_seen_price, is_bought: false, created_at: new Date().toISOString() });
-  save(data);
+async function insertWatch({ id, product_id, fcm_token, wait_window_hours, expires_at, lowest_seen_price }) {
+  await client.execute({
+    sql: 'INSERT INTO watches (id, product_id, fcm_token, wait_window_hours, expires_at, lowest_seen_price) VALUES (?, ?, ?, ?, ?, ?)',
+    args: [id, product_id, fcm_token, wait_window_hours, expires_at, lowest_seen_price],
+  });
 }
 
-function getActiveWatches() {
-  const data = load();
-  const now  = new Date();
-  return data.watches
-    .filter(w => !w.is_bought && new Date(w.expires_at) > now)
-    .map(w => {
-      const p = data.products.find(p => p.id === w.product_id);
-      return { ...w, url: p?.url, name: p?.name, platform: p?.platform };
-    });
+async function getActiveWatches() {
+  const r = await client.execute({
+    sql: `SELECT w.*, p.url, p.name, p.platform
+          FROM watches w JOIN products p ON w.product_id = p.id
+          WHERE w.is_bought = 0 AND w.expires_at > datetime('now')`,
+    args: [],
+  });
+  return r.rows;
 }
 
-function getWatchesByToken(fcm_token) {
-  const data = load();
-  const now  = new Date();
-  return data.watches
-    .filter(w => w.fcm_token === fcm_token && !w.is_bought && new Date(w.expires_at) > now)
-    .map(w => {
-      const p = data.products.find(p => p.id === w.product_id);
-      return { ...w, url: p?.url, name: p?.name, platform: p?.platform, image_url: p?.image_url };
-    })
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+async function getWatchesByToken(fcm_token) {
+  const r = await client.execute({
+    sql: `SELECT w.*, p.url, p.name, p.platform, p.image_url
+          FROM watches w JOIN products p ON w.product_id = p.id
+          WHERE w.fcm_token = ? AND w.is_bought = 0 AND w.expires_at > datetime('now')
+          ORDER BY w.created_at DESC`,
+    args: [fcm_token],
+  });
+  return r.rows;
 }
 
-function markWatchBought(id) {
-  const data = load();
-  const w = data.watches.find(w => w.id === id);
-  if (w) { w.is_bought = true; save(data); }
+async function markWatchBought(id) {
+  await client.execute({ sql: 'UPDATE watches SET is_bought = 1 WHERE id = ?', args: [id] });
 }
 
-function deleteWatch(id) {
-  const data = load();
-  data.watches = data.watches.filter(w => w.id !== id);
-  save(data);
+async function deleteWatch(id) {
+  await client.execute({ sql: 'DELETE FROM watches WHERE id = ?', args: [id] });
 }
 
-function updateLowestPrice(price, id) {
-  const data = load();
-  const w = data.watches.find(w => w.id === id);
-  if (w) { w.lowest_seen_price = price; save(data); }
+async function updateLowestPrice(price, id) {
+  await client.execute({ sql: 'UPDATE watches SET lowest_seen_price = ? WHERE id = ?', args: [price, id] });
 }
 
-function extendWatch(expires_at, wait_window_hours, id) {
-  const data = load();
-  const w = data.watches.find(w => w.id === id);
-  if (w) { w.expires_at = expires_at; w.wait_window_hours = wait_window_hours; save(data); }
+async function extendWatch(expires_at, wait_window_hours, id) {
+  await client.execute({
+    sql: 'UPDATE watches SET expires_at = ?, wait_window_hours = ? WHERE id = ?',
+    args: [expires_at, wait_window_hours, id],
+  });
 }
 
 module.exports = {
